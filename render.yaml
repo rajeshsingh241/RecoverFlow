@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: expenseflow
+    env: docker
+    plan: free
+    dockerCommand: "node backend/src/index.js"
+    healthCheckPath: /
+    disk:
+      name: sqlite-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      - key: PORT
+        value: 3000
