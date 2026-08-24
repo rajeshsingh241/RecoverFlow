@@ -4,6 +4,7 @@ const path = require('path');
 const { getDb } = require('./db');
 const { idempotency } = require('./middleware/idempotency');
 const expensesRouter = require('./routes/expenses');
+const paymentsRouter = require('./routes/payments');
 
 const app = express();
 
@@ -21,6 +22,7 @@ app.use(express.static(path.join(__dirname, '..', '..', 'frontend')));
 
 // --- API Routes ---
 app.use('/expenses', expensesRouter);
+app.use('/api/payments', paymentsRouter);
 
 // --- Health check ---
 app.get('/health', (_req, res) => {

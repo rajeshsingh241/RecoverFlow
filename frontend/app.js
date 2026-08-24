@@ -1,41 +1,56 @@
 /**
- * ExpenseFlow — Dashboard Application
- * Login/Logout, Multi-currency conversion, Budget alerts, Notifications.
+ * RecoverFlow — Dashboard Application JavaScript
+ * Coordinates API requests, simulator runs, policy gates, approvals, and audit trail rendering.
  */
 (function () {
   'use strict';
 
   const API = window.location.origin;
+  
+  // Currencies details
   const SYMBOLS = { INR: '₹', USD: '$', EUR: '€', GBP: '£', JPY: '¥' };
-
-  // Approximate exchange rates TO INR (base: INR=1)
   const RATES_TO_INR = { INR: 1, USD: 83.5, EUR: 91.0, GBP: 105.5, JPY: 0.56 };
 
-  function convertToDisplay(amount, fromCurrency, toCurrency) {
-    const inINR = Number(amount) * (RATES_TO_INR[fromCurrency] || 1);
-    return inINR / (RATES_TO_INR[toCurrency] || 1);
-  }
-
-  const CAT_ICONS = {
-    'Food & Dining': '🍽️', Transport: '🚗', 'Housing & Rent': '🏠',
-    Utilities: '💡', Healthcare: '🏥', Entertainment: '🎬',
-    Shopping: '🛍️', Education: '📚', Travel: '✈️',
-    Insurance: '🛡️', Subscriptions: '📱', Groceries: '🛒',
-    'Personal Care': '💆', 'Gifts & Donations': '🎁', Other: '📦',
-  };
-  const BAR_COLORS = ['bar-violet', 'bar-blue', 'bar-emerald', 'bar-amber', 'bar-rose', 'bar-cyan', 'bar-orange', 'bar-pink', 'bar-indigo'];
-  const BADGE_COLORS = {
-    'Food & Dining': 'badge-orange', Transport: 'badge-blue', 'Housing & Rent': 'badge-violet',
-    Utilities: 'badge-cyan', Healthcare: 'badge-rose', Entertainment: 'badge-amber',
-    Shopping: 'badge-pink', Education: 'badge-indigo', Travel: 'badge-emerald',
-    Insurance: 'badge-violet', Subscriptions: 'badge-blue', Groceries: 'badge-emerald',
-    'Personal Care': 'badge-pink', 'Gifts & Donations': 'badge-rose', Other: 'badge-violet',
+  // Failure Reason Mapping for Icons and Labels
+  const REASON_LABELS = {
+    bank_timeout: 'Bank Link Timeout',
+    insufficient_funds: 'Insufficient Funds',
+    expired_card: 'Expired Card',
+    subscription_mandate_failure: 'Subscription Mandate Decline',
+    B2B_invoice_overdue: 'B2B Invoice Overdue',
   };
 
-  // ===== DOM =====
+  const REASON_ICONS = {
+    bank_timeout: '🔌',
+    insufficient_funds: '💸',
+    expired_card: '💳',
+    subscription_mandate_failure: '🔄',
+    B2B_invoice_overdue: '📄',
+  };
+
+  // Status Badges mapping for HTML classes
+  const STATUS_CLASSES = {
+    success: 'success',
+    failed: 'failed',
+    recovered: 'recovered',
+    recovering: 'recovering',
+    pending_approval: 'pending_approval',
+    escalated: 'escalated',
+  };
+
+  const STATUS_LABELS = {
+    success: '✅ Success',
+    failed: '❌ Failed',
+    recovered: '🟢 Recovered',
+    recovering: '📨 Recovering',
+    pending_approval: '⚠️ Pending Approval',
+    escalated: '🧑‍💼 Escalated',
+  };
+
+  // ===== DOM Helpers =====
   const $ = (s) => document.getElementById(s);
 
-  // Login
+  // Login UI
   const loginOverlay = $('login-overlay');
   const loginForm = $('login-form');
   const loginNameInput = $('login-name');
@@ -46,108 +61,141 @@
   const mobileMenuBtn = $('mobile-menu-btn');
   const breadcrumb = $('breadcrumb-page');
 
-  // Form
-  const form = $('expense-form');
-  const submitBtn = $('submit-btn');
-  const formFeedback = $('form-feedback');
-  const amountInput = $('expense-amount');
-  const currencySelect = $('expense-currency');
-  const categorySelect = $('expense-category');
-  const dateInput = $('expense-date');
-  const descInput = $('expense-description');
-  const currencySymbol = $('currency-symbol');
+  // Topbar
+  const displayCurrencySelect = $('display-currency');
+  const settingsDisplayCurrency = $('settings-display-currency');
+  const searchInput = $('search-input');
 
-  // Filters
-  const filterCat = $('filter-category');
-  const sortOrder = $('sort-order');
-  const filterCount = $('filter-result-count');
-  const filterTotal = $('filter-result-total');
-
-  // List states
-  const listLoading = $('list-loading');
-  const listError = $('list-error');
-  const listEmpty = $('list-empty');
-  const tableContainer = $('expense-table-container');
-  const tbody = $('expense-tbody');
-  const retryBtn = $('retry-btn');
-
-  // Notifications
+  // Notifications dropdown
   const notifBtn = $('notification-btn');
   const notifDropdown = $('notification-dropdown');
   const notifDot = $('notification-dot');
   const notifList = $('notif-list');
   const notifClear = $('notif-clear');
 
-  // Display currency
-  const displayCurrencySelect = $('display-currency');
-  const settingsDisplayCurrency = $('settings-display-currency');
+  // Dashboard Stats
+  const statTotal = $('stat-total');
+  const statRecovered = $('stat-recovered');
+  const statRecoveredCount = $('stat-recovered-count');
+  const statAtRisk = $('stat-at-risk');
+  const statRate = $('stat-rate');
+  const statRateLabel = $('stat-rate-label');
 
-  // Budget
-  const budgetAmountInput = $('budget-amount');
-  const budgetCurrencySelect = $('budget-currency');
-  const saveBudgetBtn = $('save-budget-btn');
-  const clearBudgetBtn = $('clear-budget-btn');
-  const budgetFeedback = $('budget-feedback');
-  const budgetCurrSym = $('budget-currency-sym');
+  // Dashboard Lists
+  const recentExpensesBody = $('recent-expenses-body');
+  const categoryBreakdownBody = $('category-breakdown-body');
 
-  // State
-  let allExpenses = [];
-  let isSubmitting = false;
+  // Payments List View
+  const filterStatus = $('filter-status');
+  const paymentsTableBody = $('expense-tbody');
+  const filterResultCount = $('filter-result-count');
+  const listLoading = $('list-loading');
+  const listError = $('list-error');
+  const listEmpty = $('list-empty');
+  const tableContainer = $('expense-table-container');
+
+  // Inspector Panel elements
+  const inspectorSide = $('inspector-side');
+  const inspectorClose = $('inspector-close');
+  const inspectorPlaceholder = $('inspector-placeholder');
+  const auditDetailsPanel = $('audit-details-panel');
+
+  const inspPayId = $('insp-pay-id');
+  const inspPayStatus = $('insp-pay-status');
+  const inspCustName = $('insp-cust-name');
+  const inspCustSummary = $('insp-cust-summary');
+  const inspAmount = $('insp-amount');
+  const inspReasonCode = $('insp-reason-code');
+
+  // Timelines steps contents
+  const stepDetectText = $('step-detect-text');
+  const stepDetectTime = $('step-detect-time');
+  const stepReasonChain = $('step-reason-chain');
+  const stepReasonDraft = $('step-reason-draft');
+  const stepDecideText = $('step-decide-text');
+  const stepDecideBadge = $('step-decide-badge');
+  const stepActText = $('step-act-text');
+  const stepTrackText = $('step-track-text');
+
+  // Inspector Action Buttons
+  const manualActionBar = $('manual-action-bar');
+  const simulationActionBar = $('simulation-action-bar');
+  const btnActionApprove = $('btn-action-approve');
+  const btnActionDismiss = $('btn-action-dismiss');
+  const btnActionCheckout = $('btn-action-checkout');
+  const btnActionRetry = $('btn-action-retry');
+
+  // Simulator Form
+  const simulatorForm = $('simulator-form');
+  const simCustomer = $('sim-customer');
+  const simAmount = $('sim-amount');
+  const simCurrency = $('sim-currency');
+  const simFailure = $('sim-failure');
+  const simFormFeedback = $('form-feedback');
+
+  // Active States
+  let allPayments = [];
+  let currentInspectedPaymentId = null;
+  let isSubmittingSimulator = false;
   let notifications = [];
 
-  // ===== Utilities =====
-  function uuid() {
-    return crypto.randomUUID ? crypto.randomUUID() :
-      'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-        const r = Math.random() * 16 | 0;
-        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-      });
-  }
-
-  function fmtDate(d) {
-    try { return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { year: 'numeric', month: 'short', day: 'numeric' }); }
-    catch { return d; }
-  }
-
-  function fmtAmt(amount, symbol) {
-    const n = Number(amount);
-    return symbol + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  }
-
-  function fmtConverted(amount, fromCurrency) {
+  // ===== General Utility Functions =====
+  function convertToDisplay(amountMinor, fromCurrency, toCurrency) {
     const dc = getDisplayCurrency();
-    const converted = convertToDisplay(amount, fromCurrency, dc);
-    return SYMBOLS[dc] + converted.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const rateFrom = RATES_TO_INR[fromCurrency] || 1;
+    const rateTo = RATES_TO_INR[toCurrency || dc] || 1;
+
+    let inINR = Number(amountMinor) * rateFrom;
+    if (fromCurrency === 'JPY') {
+      inINR = inINR * 100; // JPY minor unit is 1, base to paise
+    }
+    
+    let result = inINR / rateTo;
+    if (toCurrency === 'JPY' || dc === 'JPY') {
+      return result / 100;
+    }
+    return result / 100;
   }
 
-  function getGreeting() {
-    const h = new Date().getHours();
-    if (h < 12) return 'Morning';
-    if (h < 17) return 'Afternoon';
-    return 'Evening';
+  function formatCurrency(amount, currency) {
+    const sym = SYMBOLS[currency] || currency;
+    return sym + Number(amount).toLocaleString('en-IN', {
+      minimumFractionDigits: currency === 'JPY' ? 0 : 2,
+      maximumFractionDigits: currency === 'JPY' ? 0 : 2
+    });
   }
 
+  // Display Currency Getters/Setters
   function getDisplayCurrency() {
-    return localStorage.getItem('ef_display_currency') || 'INR';
+    return localStorage.getItem('rf_display_currency') || 'INR';
   }
 
   function setDisplayCurrency(c) {
-    localStorage.setItem('ef_display_currency', c);
+    localStorage.setItem('rf_display_currency', c);
     displayCurrencySelect.value = c;
     if (settingsDisplayCurrency) settingsDisplayCurrency.value = c;
   }
 
-  // ===== Authentication =====
+  function getFormattedTime(isoString) {
+    try {
+      const d = new Date(isoString);
+      return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) + ', ' + d.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
+    } catch {
+      return isoString;
+    }
+  }
+
+  // ===== Authentication (Simulated Cookie) =====
   function getUser() {
-    return localStorage.getItem('ef_user');
+    return localStorage.getItem('rf_user');
   }
 
   function setUser(name) {
-    localStorage.setItem('ef_user', name);
+    localStorage.setItem('rf_user', name);
   }
 
   function logout() {
-    localStorage.removeItem('ef_user');
+    localStorage.removeItem('rf_user');
     loginOverlay.classList.remove('hidden');
     loginNameInput.value = '';
     loginNameInput.focus();
@@ -173,112 +221,54 @@
   $('logout-btn').addEventListener('click', logout);
   $('settings-logout-btn').addEventListener('click', logout);
 
-  // ===== Budget =====
-  function getBudget() {
-    const b = localStorage.getItem('ef_budget');
-    return b ? JSON.parse(b) : null;
-  }
-
-  function setBudget(amount, currency) {
-    localStorage.setItem('ef_budget', JSON.stringify({ amount, currency }));
-  }
-
-  function clearBudget() {
-    localStorage.removeItem('ef_budget');
-  }
-
-  saveBudgetBtn.addEventListener('click', () => {
-    const amt = Number(budgetAmountInput.value);
-    const cur = budgetCurrencySelect.value;
-    if (!amt || amt <= 0) {
-      budgetFeedback.textContent = 'Enter a valid budget amount.';
-      budgetFeedback.className = 'form-feedback visible error';
-      return;
-    }
-    setBudget(amt, cur);
-    budgetFeedback.textContent = '✓ Monthly budget saved!';
-    budgetFeedback.className = 'form-feedback visible success';
-    setTimeout(() => { budgetFeedback.className = 'form-feedback'; }, 3000);
-    // Refresh dashboard
-    loadDashboard();
-  });
-
-  clearBudgetBtn.addEventListener('click', () => {
-    clearBudget();
-    budgetAmountInput.value = '';
-    budgetFeedback.textContent = 'Budget limit removed.';
-    budgetFeedback.className = 'form-feedback visible success';
-    setTimeout(() => { budgetFeedback.className = 'form-feedback'; }, 3000);
-    loadDashboard();
-  });
-
-  budgetCurrencySelect.addEventListener('change', () => {
-    budgetCurrSym.textContent = SYMBOLS[budgetCurrencySelect.value] || budgetCurrencySelect.value;
-  });
-
-  // ===== Notifications =====
+  // ===== Notification Manager =====
   function loadNotifications() {
-    const n = localStorage.getItem('ef_notifications');
+    const n = localStorage.getItem('rf_notifications');
     notifications = n ? JSON.parse(n) : [];
   }
 
   function saveNotifications() {
-    localStorage.setItem('ef_notifications', JSON.stringify(notifications));
+    localStorage.setItem('rf_notifications', JSON.stringify(notifications));
   }
 
-  function addNotification(text, type) {
-    // Prevent duplicate notifications with same text in same month
-    const existing = notifications.find(n => n.text === text);
-    if (existing) return;
+  function triggerUINotification(text, type = 'info') {
+    // Avoid double notification logging
+    const exists = notifications.find(n => n.text === text);
+    if (exists) return;
 
     notifications.unshift({
-      id: uuid(),
+      id: Math.random().toString(36).substr(2, 9),
       text,
       type, // 'warn', 'danger', 'info'
-      time: new Date().toISOString(),
+      time: new Date().toISOString()
     });
-    if (notifications.length > 20) notifications = notifications.slice(0, 20);
+
+    if (notifications.length > 20) notifications.pop();
     saveNotifications();
-    renderNotifications();
+    renderNotificationsList();
   }
 
-  function renderNotifications() {
+  function renderNotificationsList() {
     if (notifications.length === 0) {
       notifList.innerHTML = '<div class="notif-empty">No notifications</div>';
       notifDot.style.display = 'none';
       return;
     }
-
     notifDot.style.display = '';
-
     notifList.innerHTML = notifications.map(n => {
       const icon = n.type === 'danger' ? '🚨' : n.type === 'warn' ? '⚠️' : 'ℹ️';
-      const iconClass = n.type || 'info';
-      const timeAgo = getRelativeTime(n.time);
       return `
         <div class="notif-item">
-          <div class="notif-icon ${iconClass}">${icon}</div>
+          <div class="notif-icon ${n.type || 'info'}">${icon}</div>
           <div class="notif-content">
             <div class="notif-text">${n.text}</div>
-            <div class="notif-time">${timeAgo}</div>
+            <div class="notif-time">${getFormattedTime(n.time)}</div>
           </div>
         </div>
       `;
     }).join('');
   }
 
-  function getRelativeTime(iso) {
-    const diff = Date.now() - new Date(iso).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1) return 'Just now';
-    if (mins < 60) return `${mins}m ago`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return `${hrs}h ago`;
-    const days = Math.floor(hrs / 24);
-    return `${days}d ago`;
-  }
-
-  // Toggle dropdown
   notifBtn.addEventListener('click', e => {
     e.stopPropagation();
     notifDropdown.classList.toggle('open');
@@ -293,12 +283,18 @@
   notifClear.addEventListener('click', () => {
     notifications = [];
     saveNotifications();
-    renderNotifications();
+    renderNotificationsList();
   });
 
-  // ===== Navigation =====
-  const views = ['dashboard', 'add', 'expenses', 'analytics', 'settings'];
-  const viewTitles = { dashboard: 'Dashboard', add: 'Add Expense', expenses: 'All Expenses', analytics: 'Analytics', settings: 'Settings' };
+  // ===== Navigations =====
+  const views = ['dashboard', 'payments', 'policies', 'simulator', 'settings'];
+  const viewTitles = {
+    dashboard: 'Operations Dashboard',
+    payments: 'Failed Payments Registry',
+    policies: 'Safety Policies & Gates',
+    simulator: 'Failure Simulator',
+    settings: 'Settings'
+  };
 
   function switchView(viewName) {
     views.forEach(v => {
@@ -312,10 +308,12 @@
     sidebar.classList.remove('open');
     overlay.classList.remove('active');
 
-    if (viewName === 'dashboard') loadDashboard();
-    if (viewName === 'expenses') loadExpensesList();
-    if (viewName === 'analytics') loadAnalytics();
-    if (viewName === 'settings') loadSettings();
+    // Close active inspector on view switch
+    closeInspector();
+
+    if (viewName === 'dashboard') loadDashboardData();
+    if (viewName === 'payments') loadPaymentsRegistry();
+    if (viewName === 'simulator') loadSimulatorCustomers();
   }
 
   views.forEach(v => {
@@ -323,11 +321,9 @@
     if (nav) nav.addEventListener('click', e => { e.preventDefault(); switchView(v); });
   });
 
-  [$('quick-add-btn'), $('dash-add-btn'), $('empty-add-btn')].forEach(btn => {
-    if (btn) btn.addEventListener('click', () => switchView('add'));
-  });
-
-  $('see-all-link')?.addEventListener('click', e => { e.preventDefault(); switchView('expenses'); });
+  $('dash-add-btn')?.addEventListener('click', () => switchView('simulator'));
+  $('quick-add-btn')?.addEventListener('click', () => switchView('simulator'));
+  $('see-all-link')?.addEventListener('click', e => { e.preventDefault(); switchView('payments'); });
 
   mobileMenuBtn?.addEventListener('click', () => {
     sidebar.classList.toggle('open');
@@ -339,200 +335,120 @@
     overlay.classList.remove('active');
   });
 
-  // Display currency change (topbar)
+  // Currency select updates
   displayCurrencySelect.addEventListener('change', () => {
     setDisplayCurrency(displayCurrencySelect.value);
-    refreshCurrentView();
+    refreshActiveView();
   });
 
-  // Display currency change (settings)
-  settingsDisplayCurrency.addEventListener('change', () => {
-    setDisplayCurrency(settingsDisplayCurrency.value);
-    refreshCurrentView();
-  });
-
-  function refreshCurrentView() {
+  function refreshActiveView() {
     const activeView = document.querySelector('.view.active');
     if (!activeView) return;
-    const id = activeView.id.replace('view-', '');
-    if (id === 'dashboard') loadDashboard();
-    if (id === 'expenses') loadExpensesList();
-    if (id === 'analytics') loadAnalytics();
+    const viewId = activeView.id.replace('view-', '');
+    if (viewId === 'dashboard') loadDashboardData();
+    if (viewId === 'payments') loadPaymentsRegistry();
   }
 
-  // ===== API =====
-  async function apiGetExpenses(category, sort) {
-    const p = new URLSearchParams();
-    if (category) p.set('category', category);
-    if (sort) p.set('sort', sort);
-    const r = await fetch(`${API}/expenses${p.toString() ? '?' + p : ''}`);
-    if (!r.ok) throw new Error('Failed to fetch');
-    return r.json();
-  }
-
-  async function apiCreateExpense(data, key) {
-    const r = await fetch(`${API}/expenses`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Idempotency-Key': key },
-      body: JSON.stringify(data),
-    });
-    const body = await r.json();
-    if (!r.ok) { const e = new Error(body.error); e.details = body.details; throw e; }
-    return body;
-  }
-
-  // ===== Compute totals in display currency =====
-  function computeTotalConverted(expenses) {
-    const dc = getDisplayCurrency();
-    let total = 0;
-    expenses.forEach(e => {
-      total += convertToDisplay(e.amount, e.currency, dc);
-    });
-    return { total, symbol: SYMBOLS[dc], currency: dc };
-  }
-
-  // ===== Dashboard =====
-  async function loadDashboard() {
+  // ===== Dashboard Operations Loader =====
+  async function loadDashboardData() {
     try {
-      const res = await apiGetExpenses('', 'date_desc');
-      allExpenses = res.data;
       const dc = getDisplayCurrency();
-      const sym = SYMBOLS[dc];
+      const res = await fetch(`${API}/api/payments`);
+      const body = await res.json();
+      allPayments = body.data;
+      const stats = body.meta.stats;
 
-      // Total
-      const { total } = computeTotalConverted(allExpenses);
-      $('stat-total').textContent = fmtAmt(total, sym);
+      // Stats card calculations (normalize INR rates returned by server to current display currency)
+      const displayTotal = stats.total_revenue * RATES_TO_INR.INR / RATES_TO_INR[dc];
+      const displayRecovered = stats.revenue_recovered * RATES_TO_INR.INR / RATES_TO_INR[dc];
+      const displayAtRisk = stats.revenue_at_risk * RATES_TO_INR.INR / RATES_TO_INR[dc];
 
-      // 30 Days Window
-      const now = new Date();
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(now.getDate() - 30);
-      thirtyDaysAgo.setHours(0, 0, 0, 0);
-      
-      const monthExpenses = allExpenses.filter(e => {
-        return new Date(e.date) >= thirtyDaysAgo;
-      });
-      const monthTotal = computeTotalConverted(monthExpenses);
-      $('stat-month').textContent = monthExpenses.length > 0 ? fmtAmt(monthTotal.total, sym) : '—';
-      $('stat-month-count').textContent = `${monthExpenses.length} entries`;
+      statTotal.textContent = formatCurrency(displayTotal, dc);
+      statRecovered.textContent = formatCurrency(displayRecovered, dc);
+      statAtRisk.textContent = formatCurrency(displayAtRisk, dc);
+      statRate.textContent = `${stats.recovery_rate}%`;
 
-      // Budget
-      const budget = getBudget();
-      const budgetCard = $('stat-budget').closest('.stat-card');
-      if (budget) {
-        const budgetInDisplay = convertToDisplay(budget.amount, budget.currency, dc);
-        const remaining = budgetInDisplay - monthTotal.total;
-        $('stat-budget').textContent = fmtAmt(Math.abs(remaining), sym);
-        
-        if (remaining >= 0) {
-          budgetCard.className = 'stat-card budget-ok';
-          $('stat-budget-label').textContent = 'Remaining this month';
-          $('budget-icon').className = 'stat-card-icon icon-emerald';
-        } else {
-          budgetCard.className = 'stat-card budget-over';
-          $('stat-budget').textContent = '−' + fmtAmt(Math.abs(remaining), sym);
-          $('stat-budget-label').textContent = '⚠️ Over budget!';
-          $('budget-icon').className = 'stat-card-icon icon-rose';
+      // Stats label modifications
+      const recoveredPayments = allPayments.filter(p => p.status === 'recovered');
+      statRecoveredCount.textContent = `${recoveredPayments.length} transactions recovered`;
 
-          const monthName = 'the last 30 days';
-          addNotification(
-            `You've exceeded your 30-day budget of ${fmtAmt(budgetInDisplay, sym)}. You're over by ${fmtAmt(Math.abs(remaining), sym)}.`,
-            'danger'
-          );
-        }
+      const atRiskCount = allPayments.filter(p => ['failed', 'recovering', 'pending_approval', 'escalated'].includes(p.status)).length;
+      $('stat-at-risk-label').textContent = `${atRiskCount} events under active recovery`;
 
-        // Warning at 80%
-        if (remaining >= 0 && monthTotal.total >= budgetInDisplay * 0.8) {
-          addNotification(
-            `Heads up! You've used 80% of your 30-day budget. Only ${fmtAmt(remaining, sym)} left.`,
-            'warn'
-          );
-        }
-      } else {
-        budgetCard.className = 'stat-card';
-        $('stat-budget').textContent = '—';
-        $('stat-budget-label').textContent = 'Set limit in Settings';
-        $('budget-icon').className = 'stat-card-icon icon-emerald';
-      }
-
-      // Entries
-      $('stat-entries') && ($('stat-entries').textContent = allExpenses.length);
-
-      // Top category
-      const cats = new Set(allExpenses.map(e => e.category));
-      if ($('stat-categories-count')) $('stat-categories-count').textContent = `${cats.size} categories`;
-      
-      if (allExpenses.length > 0) {
-        const catTotals = {};
-        allExpenses.forEach(e => {
-          if (!catTotals[e.category]) catTotals[e.category] = 0;
-          catTotals[e.category] += convertToDisplay(e.amount, e.currency, dc);
-        });
-        const top = Object.entries(catTotals).sort((a, b) => b[1] - a[1])[0];
-        $('stat-top-cat').textContent = top[0];
-        $('stat-top-cat-amount').textContent = `${Math.round((top[1] / total) * 100)}% of total`;
-      }
-
-      renderRecentExpenses(allExpenses.slice(0, 5));
-      renderCategoryBreakdown(allExpenses);
+      // Render recent stream
+      renderRecentStream(allPayments.slice(0, 5));
+      // Render breakdown
+      renderReasonBreakdown(allPayments);
 
     } catch (err) {
-      console.error('Dashboard load error:', err);
+      console.error('Failed to load dashboard metrics:', err);
     }
   }
 
-  function renderRecentExpenses(expenses) {
-    const body = $('recent-expenses-body');
-    if (expenses.length === 0) {
-      body.innerHTML = '<div class="panel-empty"><p>No expenses yet</p></div>';
+  function renderRecentStream(payments) {
+    if (payments.length === 0) {
+      recentExpensesBody.innerHTML = '<div class="panel-empty"><p>No payment events logged</p></div>';
       return;
     }
+
     const dc = getDisplayCurrency();
-    const sym = SYMBOLS[dc];
-    body.innerHTML = expenses.map(e => {
-      const converted = convertToDisplay(e.amount, e.currency, dc);
+    recentExpensesBody.innerHTML = payments.map(p => {
+      const converted = convertToDisplay(p.amount_minor, p.currency, dc);
+      const icon = REASON_ICONS[p.failure_reason_code] || '💰';
+      const label = p.failure_reason_code ? REASON_LABELS[p.failure_reason_code] : 'Success';
+      const badgeClass = STATUS_CLASSES[p.status] || 'success';
+      const badgeLabel = STATUS_LABELS[p.status] || p.status;
+      
       return `
-        <div class="recent-item">
-          <div class="recent-item-icon">${CAT_ICONS[e.category] || '📦'}</div>
+        <div class="recent-item" style="cursor: pointer;" onclick="window.inspectPayment('${p.id}')">
+          <div class="recent-item-icon">${icon}</div>
           <div class="recent-item-info">
-            <div class="recent-item-cat">${e.category}</div>
-            <div class="recent-item-desc">${e.description || '—'}</div>
+            <div class="recent-item-cat">${p.customer_name}</div>
+            <div class="recent-item-desc">${label}</div>
           </div>
           <div class="recent-item-right">
-            <div class="recent-item-amount">${fmtAmt(converted, sym)}</div>
-            <div class="recent-item-date">${fmtDate(e.date)}</div>
+            <div class="recent-item-amount">${formatCurrency(converted, dc)}</div>
+            <div>
+              <span class="status-badge ${badgeClass}" style="font-size:0.65rem; padding: 2px 6px; display:inline-block; margin-top:2px;">
+                ${badgeLabel}
+              </span>
+            </div>
           </div>
         </div>
       `;
     }).join('');
   }
 
-  function renderCategoryBreakdown(expenses) {
-    const body = $('category-breakdown-body');
-    if (expenses.length === 0) {
-      body.innerHTML = '<div class="panel-empty"><p>No data available</p></div>';
+  function renderReasonBreakdown(payments) {
+    const failedPayments = payments.filter(p => p.failure_reason_code);
+    if (failedPayments.length === 0) {
+      categoryBreakdownBody.innerHTML = '<div class="panel-empty"><p>No failed transactions yet</p></div>';
       return;
     }
 
     const dc = getDisplayCurrency();
-    const sym = SYMBOLS[dc];
-    const catTotals = {};
-    expenses.forEach(e => {
-      if (!catTotals[e.category]) catTotals[e.category] = 0;
-      catTotals[e.category] += convertToDisplay(e.amount, e.currency, dc);
+    const totals = {};
+    failedPayments.forEach(p => {
+      if (!totals[p.failure_reason_code]) totals[p.failure_reason_code] = 0;
+      totals[p.failure_reason_code] += convertToDisplay(p.amount_minor, p.currency, dc);
     });
 
-    const sorted = Object.entries(catTotals).sort((a, b) => b[1] - a[1]);
+    const sorted = Object.entries(totals).sort((a, b) => b[1] - a[1]);
     const maxVal = sorted[0][1];
 
-    body.innerHTML = sorted.map(([cat, total], i) => {
+    const colors = ['bar-violet', 'bar-rose', 'bar-amber', 'bar-blue', 'bar-orange'];
+
+    categoryBreakdownBody.innerHTML = sorted.map(([reason, total], i) => {
       const pct = Math.max(5, (total / maxVal) * 100);
-      const barClass = BAR_COLORS[i % BAR_COLORS.length];
+      const barClass = colors[i % colors.length];
+      const icon = REASON_ICONS[reason] || '📦';
+      const label = REASON_LABELS[reason] || reason;
+      
       return `
         <div class="cat-bar-item">
           <div class="cat-bar-header">
-            <span class="cat-bar-name">${CAT_ICONS[cat] || '📦'} ${cat}</span>
-            <span class="cat-bar-amount">${fmtAmt(total, sym)}</span>
+            <span class="cat-bar-name">${icon} ${label}</span>
+            <span class="cat-bar-amount">${formatCurrency(total, dc)}</span>
           </div>
           <div class="cat-bar-track">
             <div class="cat-bar-fill ${barClass}" style="width: ${pct}%"></div>
@@ -542,300 +458,390 @@
     }).join('');
   }
 
-  // ===== Expenses List =====
-  async function loadExpensesList() {
-    showListState('loading');
+  // ===== Payments Registry View =====
+  async function loadPaymentsRegistry() {
+    showRegistryState('loading');
     try {
-      const res = await apiGetExpenses(filterCat.value, sortOrder.value);
-      allExpenses = res.data;
+      const status = filterStatus.value;
+      const search = searchInput.value;
+      
+      const queryParams = new URLSearchParams();
+      if (status) queryParams.set('status', status);
+      if (search) queryParams.set('search', search);
 
-      const dc = getDisplayCurrency();
-      const sym = SYMBOLS[dc];
-      const { total } = computeTotalConverted(allExpenses);
+      const res = await fetch(`${API}/api/payments?${queryParams.toString()}`);
+      if (!res.ok) throw new Error('API Sync Failed');
 
-      filterCount.textContent = `${allExpenses.length} expense${allExpenses.length !== 1 ? 's' : ''}`;
-      filterTotal.textContent = allExpenses.length > 0 ? `Total: ${fmtAmt(total, sym)}` : 'Total: —';
+      const body = await res.json();
+      allPayments = body.data;
 
-      if (allExpenses.length === 0) {
-        showListState('empty');
+      filterResultCount.textContent = `${allPayments.length} payment record${allPayments.length !== 1 ? 's' : ''}`;
+
+      if (allPayments.length === 0) {
+        showRegistryState('empty');
       } else {
-        renderExpensesTable(allExpenses);
-        showListState('data');
+        renderRegistryTable(allPayments);
+        showRegistryState('data');
       }
     } catch (err) {
       $('list-error-message').textContent = err.message;
-      showListState('error');
+      showRegistryState('error');
     }
   }
 
-  function renderExpensesTable(expenses) {
-    const dc = getDisplayCurrency();
-    const sym = SYMBOLS[dc];
-    tbody.innerHTML = expenses.map((e, i) => {
-      const badgeClass = BADGE_COLORS[e.category] || 'badge-violet';
-      const converted = convertToDisplay(e.amount, e.currency, dc);
-      return `
-        <tr style="animation-delay:${i * 0.03}s">
-          <td class="date-cell">${fmtDate(e.date)}</td>
-          <td><span class="category-badge ${badgeClass}">${e.category}</span></td>
-          <td>${e.description || '<span style="color:var(--text-muted)">—</span>'}</td>
-          <td class="text-right amount-cell">${fmtAmt(converted, sym)}</td>
-        </tr>
-      `;
-    }).join('');
-  }
-
-  function showListState(state) {
+  function showRegistryState(state) {
     listLoading.style.display = state === 'loading' ? '' : 'none';
     listError.style.display = state === 'error' ? '' : 'none';
     listEmpty.style.display = state === 'empty' ? '' : 'none';
     tableContainer.style.display = state === 'data' ? '' : 'none';
   }
 
-  filterCat.addEventListener('change', loadExpensesList);
-  sortOrder.addEventListener('change', loadExpensesList);
-  retryBtn?.addEventListener('click', loadExpensesList);
-
-  // ===== Analytics =====
-  async function loadAnalytics() {
-    try {
-      const res = await apiGetExpenses('', 'date_desc');
-      const expenses = res.data;
-      const totals = res.meta.totals;
-
-      renderAnalyticsCategoryBars(expenses);
-      renderCurrencyBreakdown(expenses, totals);
-      renderTopExpenses(expenses);
-    } catch (err) {
-      console.error('Analytics load error:', err);
-    }
-  }
-
-  function renderAnalyticsCategoryBars(expenses) {
-    const body = $('analytics-category-bars');
-    if (expenses.length === 0) {
-      body.innerHTML = '<div class="panel-empty"><p>No data yet</p></div>';
-      return;
-    }
-
+  function renderRegistryTable(payments) {
     const dc = getDisplayCurrency();
-    const sym = SYMBOLS[dc];
-    const catData = {};
-    expenses.forEach(e => {
-      if (!catData[e.category]) catData[e.category] = { total: 0, count: 0 };
-      catData[e.category].total += convertToDisplay(e.amount, e.currency, dc);
-      catData[e.category].count++;
-    });
+    paymentsTableBody.innerHTML = payments.map((p, i) => {
+      const converted = convertToDisplay(p.amount_minor, p.currency, dc);
+      const badgeClass = STATUS_CLASSES[p.status] || 'success';
+      const badgeLabel = STATUS_LABELS[p.status] || p.status;
+      const failReason = p.failure_reason_code ? REASON_LABELS[p.failure_reason_code] : '—';
+      const isSelected = p.id === currentInspectedPaymentId ? 'style="background:var(--bg-active);"' : '';
 
-    const sorted = Object.entries(catData).sort((a, b) => b[1].total - a[1].total);
-    const maxVal = sorted[0][1].total;
-
-    body.innerHTML = sorted.map(([cat, data], i) => {
-      const pct = Math.max(3, (data.total / maxVal) * 100);
-      const barClass = BAR_COLORS[i % BAR_COLORS.length];
       return `
-        <div class="cat-bar-item">
-          <div class="cat-bar-header">
-            <span class="cat-bar-name">${CAT_ICONS[cat] || '📦'} ${cat} <span style="color:var(--text-muted); font-weight:400; font-size:0.72rem;">(${data.count})</span></span>
-            <span class="cat-bar-amount">${fmtAmt(data.total, sym)}</span>
-          </div>
-          <div class="cat-bar-track">
-            <div class="cat-bar-fill ${barClass}" style="width: ${pct}%"></div>
-          </div>
-        </div>
+        <tr ${isSelected} onclick="window.inspectPayment('${p.id}')" style="animation-delay:${i * 0.03}s; cursor:pointer;">
+          <td class="date-cell">${getFormattedTime(p.created_at)}</td>
+          <td><strong>${p.customer_name}</strong></td>
+          <td class="text-right amount-cell"><strong>${formatCurrency(converted, dc)}</strong></td>
+          <td><span style="font-size:0.8rem; color:var(--text-secondary)">${failReason}</span></td>
+          <td><span class="status-badge ${badgeClass}">${badgeLabel}</span></td>
+        </tr>
       `;
     }).join('');
   }
 
-  function renderCurrencyBreakdown(expenses, totals) {
-    const body = $('analytics-currency');
-    if (totals.length === 0) {
-      body.innerHTML = '<div class="panel-empty"><p>No data yet</p></div>';
-      return;
-    }
+  filterStatus.addEventListener('change', loadPaymentsRegistry);
+  searchInput.addEventListener('input', () => {
+    // Basic debounce
+    clearTimeout(window.searchDebounce);
+    window.searchDebounce = setTimeout(loadPaymentsRegistry, 300);
+  });
+  $('retry-btn')?.addEventListener('click', loadPaymentsRegistry);
 
-    const currencyCount = {};
-    expenses.forEach(e => {
-      currencyCount[e.currency] = (currencyCount[e.currency] || 0) + 1;
+  // ===== Audit Inspector Mechanics =====
+  window.inspectPayment = async function (paymentId) {
+    currentInspectedPaymentId = paymentId;
+    
+    // Highlight selected row in table
+    const rows = paymentsTableBody.querySelectorAll('tr');
+    allPayments.forEach((p, idx) => {
+      if (rows[idx]) {
+        if (p.id === paymentId) {
+          rows[idx].style.background = 'var(--bg-active)';
+        } else {
+          rows[idx].style.background = '';
+        }
+      }
     });
 
-    body.innerHTML = totals.map(t => `
-      <div class="currency-card">
-        <div class="currency-code">
-          <div class="currency-symbol-box">${t.symbol}</div>
-          <div>
-            <div class="currency-name">${t.currency}</div>
-            <div class="currency-count">${currencyCount[t.currency] || 0} transactions</div>
-          </div>
-        </div>
-        <div class="currency-total">${fmtAmt(t.total, t.symbol)}</div>
-      </div>
-    `).join('');
+    inspectorPlaceholder.classList.add('hidden');
+    auditDetailsPanel.classList.remove('hidden');
+
+    try {
+      const res = await fetch(`${API}/api/payments/${paymentId}/audit`);
+      if (!res.ok) throw new Error('Failed to load audit logs.');
+      const data = await res.json();
+      
+      renderInspectorData(data);
+    } catch (err) {
+      console.error(err);
+      alert('Error fetching payment audit trail.');
+    }
+  };
+
+  function renderInspectorData({ payment, audit_logs, recovery_attempts }) {
+    const dc = getDisplayCurrency();
+    const displayAmt = convertToDisplay(payment.amount_minor, payment.currency, dc);
+    
+    inspPayId.textContent = payment.id;
+    inspPayStatus.textContent = STATUS_LABELS[payment.status] || payment.status;
+    inspPayStatus.className = `status-badge ${STATUS_CLASSES[payment.status]}`;
+    
+    inspCustName.textContent = payment.customer_name;
+    
+    const summaryLabels = {
+      high_success_rate: '🌟 High Success',
+      first_time_buyer: '🆕 First Time Buyer',
+      frequent_failures: '⚠️ Frequent Failures'
+    };
+    inspCustSummary.textContent = summaryLabels[payment.payment_history_summary] || payment.payment_history_summary;
+    inspAmount.textContent = formatCurrency(displayAmt, dc) + ` (${payment.currency})`;
+    inspReasonCode.textContent = payment.failure_reason_code ? REASON_LABELS[payment.failure_reason_code] : 'Success';
+
+    // Timeline Rendering
+    
+    // STEP 1: DETECT
+    const detectLog = audit_logs.find(l => l.event_type === 'failure_detected');
+    if (detectLog) {
+      stepDetectText.textContent = detectLog.reason;
+      stepDetectTime.textContent = getFormattedTime(detectLog.created_at);
+    } else {
+      stepDetectText.textContent = payment.failure_reason_code 
+        ? `Payment failure of ${payment.currency} ${payment.amount_minor} detected.` 
+        : 'Payment successfully initialized.';
+      stepDetectTime.textContent = getFormattedTime(payment.created_at);
+    }
+
+    // STEP 2: REASON
+    const aiLog = audit_logs.find(l => l.event_type === 'ai_recommendation');
+    if (aiLog) {
+      // Extract reasoning out of the AI log
+      const reasonMatch = aiLog.reason.match(/Reasoning: "(.*?)"/);
+      const reasoning = reasonMatch ? reasonMatch[1] : aiLog.reason;
+      
+      stepReasonChain.textContent = reasoning;
+      
+      const latestAttempt = recovery_attempts[0];
+      if (latestAttempt && latestAttempt.message_draft) {
+        stepReasonDraft.value = latestAttempt.message_draft;
+        stepReasonDraft.disabled = (payment.status !== 'pending_approval');
+      } else {
+        // Extract message draft from log
+        const draftMatch = aiLog.reason.match(/Message Draft: "(.*?)"/);
+        if (draftMatch) {
+          stepReasonDraft.value = draftMatch[1];
+        } else {
+          stepReasonDraft.value = 'N/A — System Auto-Retry';
+        }
+        stepReasonDraft.disabled = true;
+      }
+    } else {
+      stepReasonChain.textContent = payment.status === 'success' 
+        ? 'AI Skip: Transaction successful. No analysis required.' 
+        : 'AI Analysis not triggered yet.';
+      stepReasonDraft.value = '';
+      stepReasonDraft.disabled = true;
+    }
+
+    // STEP 3: DECIDE
+    const policyLog = audit_logs.find(l => l.event_type === 'policy_evaluation');
+    if (policyLog) {
+      stepDecideText.textContent = policyLog.reason;
+      stepDecideBadge.textContent = policyLog.result;
+      stepDecideBadge.className = `policy-badge ${policyLog.result === 'AUTHORIZED' ? 'success' : 'warn'}`;
+    } else {
+      stepDecideText.textContent = payment.status === 'success' 
+        ? 'Policy Skip: Safe successful transaction.' 
+        : 'Awaiting policy validation...';
+      stepDecideBadge.textContent = 'SKIP';
+      stepDecideBadge.className = 'policy-badge';
+    }
+
+    // STEP 4: ACT
+    const actLog = audit_logs.find(l => l.event_type === 'action_executed');
+    if (actLog) {
+      stepActText.textContent = actLog.reason;
+    } else {
+      stepActText.textContent = payment.status === 'success'
+        ? 'No recovery actions needed. Cash collected.'
+        : 'Awaiting human override or scheduler dispatcher.';
+    }
+
+    // Interactive action visibility logic
+    if (payment.status === 'pending_approval') {
+      manualActionBar.classList.remove('hidden');
+      simulationActionBar.classList.add('hidden');
+    } else if (['failed', 'recovering', 'escalated'].includes(payment.status)) {
+      manualActionBar.classList.add('hidden');
+      simulationActionBar.classList.remove('hidden');
+    } else {
+      manualActionBar.classList.add('hidden');
+      simulationActionBar.classList.add('hidden');
+    }
+
+    // STEP 5: TRACK
+    const trackLog = audit_logs.find(l => l.event_type === 'recovery_outcome');
+    if (trackLog) {
+      stepTrackText.textContent = trackLog.reason;
+    } else {
+      if (payment.status === 'success') {
+        stepTrackText.textContent = 'Revenue locked successfully. Audited.';
+      } else if (payment.status === 'recovered') {
+        stepTrackText.textContent = 'Resolved: Payment successfully recovered.';
+      } else if (payment.status === 'recovering') {
+        stepTrackText.textContent = 'Pending: Reminder sent. Awaiting customer payment.';
+      } else if (payment.status === 'pending_approval') {
+        stepTrackText.textContent = 'Blocked: Waiting for ops approval.';
+      } else {
+        stepTrackText.textContent = 'Failed: Awaiting recovery actions.';
+      }
+    }
   }
 
-  function renderTopExpenses(expenses) {
-    const body = $('analytics-top-expenses');
-    if (expenses.length === 0) {
-      body.innerHTML = '<div class="panel-empty"><p>No data yet</p></div>';
+  function closeInspector() {
+    currentInspectedPaymentId = null;
+    inspectorPlaceholder.classList.remove('hidden');
+    auditDetailsPanel.classList.add('hidden');
+    
+    // Clear selection style in table rows
+    const rows = paymentsTableBody.querySelectorAll('tr');
+    rows.forEach(r => r.style.background = '');
+  }
+
+  inspectorClose.addEventListener('click', closeInspector);
+
+  // Inspector Action executions
+  btnActionApprove.addEventListener('click', async () => {
+    if (!currentInspectedPaymentId) return;
+    const msg = stepReasonDraft.value.trim();
+    
+    btnActionApprove.disabled = true;
+    try {
+      const res = await fetch(`${API}/api/payments/${currentInspectedPaymentId}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ custom_message: msg })
+      });
+      if (!res.ok) throw new Error('Approval request failed.');
+      
+      triggerUINotification(`✓ Payment #${currentInspectedPaymentId} recovery plan approved!`, 'info');
+      // Reload lists
+      await refreshActiveView();
+      // Re-inspect
+      await inspectPayment(currentInspectedPaymentId);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      btnActionApprove.disabled = false;
+    }
+  });
+
+  btnActionDismiss.addEventListener('click', async () => {
+    closeInspector();
+  });
+
+  btnActionCheckout.addEventListener('click', async () => {
+    if (!currentInspectedPaymentId) return;
+    
+    btnActionCheckout.disabled = true;
+    try {
+      const res = await fetch(`${API}/api/payments/${currentInspectedPaymentId}/simulate-checkout`, {
+        method: 'POST'
+      });
+      if (!res.ok) throw new Error('Checkout simulation request failed.');
+      
+      triggerUINotification(`💳 Customer checkout simulated successfully! Recovered payment #${currentInspectedPaymentId}`, 'danger');
+      await refreshActiveView();
+      await inspectPayment(currentInspectedPaymentId);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      btnActionCheckout.disabled = false;
+    }
+  });
+
+  btnActionRetry.addEventListener('click', async () => {
+    if (!currentInspectedPaymentId) return;
+    
+    btnActionRetry.disabled = true;
+    try {
+      const res = await fetch(`${API}/api/payments/${currentInspectedPaymentId}/retry`, {
+        method: 'POST'
+      });
+      if (!res.ok) throw new Error('Retry command failed.');
+      
+      triggerUINotification(`⚡ Gateway transaction retry dispatched for #${currentInspectedPaymentId}`, 'info');
+      await refreshActiveView();
+      await inspectPayment(currentInspectedPaymentId);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      btnActionRetry.disabled = false;
+    }
+  });
+
+  // ===== Simulator Panel =====
+  async function loadSimulatorCustomers() {
+    try {
+      const res = await fetch(`${API}/api/payments/customers`);
+      const body = await res.json();
+      const customers = body.data;
+
+      simCustomer.innerHTML = '<option value="" disabled selected>Select customer profile...</option>' + 
+        customers.map(c => {
+          let summaryLabel = c.payment_history_summary === 'high_success_rate' ? '🌟 Success Profile' : c.payment_history_summary === 'frequent_failures' ? '⚠️ High Decline Rate' : '🆕 First-time Buyer';
+          return `<option value="${c.id}">${c.name} (${summaryLabel})</option>`;
+        }).join('');
+    } catch (err) {
+      console.error('Failed to load customers for simulator:', err);
+    }
+  }
+
+  simulatorForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (isSubmittingSimulator) return;
+
+    simFormFeedback.className = 'form-feedback';
+    simFormFeedback.textContent = '';
+    
+    const customerId = simCustomer.value;
+    const amount = simAmount.value.trim();
+    const currency = simCurrency.value;
+    const failureCode = simFailure.value;
+
+    if (!customerId || !amount || Number(amount) <= 0 || !failureCode) {
+      simFormFeedback.textContent = 'Please fill out all fields with valid values.';
+      simFormFeedback.className = 'form-feedback visible error';
       return;
     }
 
-    const dc = getDisplayCurrency();
-    const sym = SYMBOLS[dc];
-    const sorted = [...expenses].map(e => ({
-      ...e,
-      convertedAmount: convertToDisplay(e.amount, e.currency, dc),
-    })).sort((a, b) => b.convertedAmount - a.convertedAmount).slice(0, 5);
-
-    body.innerHTML = sorted.map((e, i) => `
-      <div class="top-expense-item">
-        <div class="top-expense-rank">${i + 1}</div>
-        <div class="top-expense-info">
-          <div class="top-expense-desc">${e.description || e.category}</div>
-          <div class="top-expense-cat">${e.category} · ${fmtDate(e.date)}</div>
-        </div>
-        <div class="top-expense-amount">${fmtAmt(e.convertedAmount, sym)}</div>
-      </div>
-    `).join('');
-  }
-
-  // ===== Settings =====
-  function loadSettings() {
-    const budget = getBudget();
-    if (budget) {
-      budgetAmountInput.value = budget.amount;
-      budgetCurrencySelect.value = budget.currency;
-      budgetCurrSym.textContent = SYMBOLS[budget.currency] || budget.currency;
-    }
-    const dc = getDisplayCurrency();
-    settingsDisplayCurrency.value = dc;
-    $('settings-user-name').textContent = getUser() || 'User';
-  }
-
-  // ===== Form Submission =====
-  function validateForm() {
-    let ok = true;
-    document.querySelectorAll('.field-error').forEach(e => e.textContent = '');
-
-    if (!amountInput.value || Number(amountInput.value) <= 0) {
-      $('error-amount').textContent = 'Enter a valid positive amount.';
-      ok = false;
-    }
-    if (!categorySelect.value) {
-      $('error-category').textContent = 'Select a category.';
-      ok = false;
-    }
-    if (!dateInput.value) {
-      $('error-date').textContent = 'Date is required.';
-      ok = false;
-    } else if (new Date(dateInput.value + 'T23:59:59') > new Date()) {
-      $('error-date').textContent = 'Cannot be in the future.';
-      ok = false;
-    }
-    return ok;
-  }
-
-  form.addEventListener('submit', async e => {
-    e.preventDefault();
-    if (isSubmitting) return;
-
-    formFeedback.className = 'form-feedback';
-    if (!validateForm()) return;
-
-    isSubmitting = true;
+    isSubmittingSimulator = true;
+    const submitBtn = simulatorForm.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
     submitBtn.classList.add('loading');
 
     try {
-      await apiCreateExpense({
-        amount: amountInput.value.trim(),
-        currency: currencySelect.value,
-        category: categorySelect.value,
-        description: descInput.value.trim(),
-        date: dateInput.value,
-      }, uuid());
+      const res = await fetch(`${API}/api/payments/simulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customer_id: customerId,
+          amount,
+          currency,
+          failure_reason_code: failureCode
+        })
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Simulation dispatch failed');
 
-      formFeedback.textContent = '✓ Expense added successfully!';
-      formFeedback.className = 'form-feedback visible success';
-      form.reset();
-      dateInput.value = new Date().toISOString().split('T')[0];
-      currencySymbol.textContent = '₹';
+      simFormFeedback.textContent = '✓ Failure event simulated successfully!';
+      simFormFeedback.className = 'form-feedback visible success';
+      
+      triggerUINotification(`⚠️ Simulated failure detected: ${REASON_LABELS[failureCode]} for ${formatCurrency(amount, currency)}`, 'warn');
 
-      setTimeout(() => { formFeedback.className = 'form-feedback'; }, 4000);
+      // Reset form
+      simulatorForm.reset();
 
-      // Check budget after adding
-      checkBudgetAfterAdd();
+      setTimeout(() => {
+        simFormFeedback.className = 'form-feedback';
+        
+        // Go to failed payments list and show inspector immediately
+        switchView('payments');
+        inspectPayment(body.payment.id);
+      }, 1000);
+
     } catch (err) {
-      if (err.details) {
-        err.details.forEach(d => {
-          const el = $(`error-${d.field}`);
-          if (el) el.textContent = d.message;
-        });
-      }
-      formFeedback.textContent = err.message || 'Something went wrong.';
-      formFeedback.className = 'form-feedback visible error';
+      simFormFeedback.textContent = err.message || 'Something went wrong.';
+      simFormFeedback.className = 'form-feedback visible error';
     } finally {
-      isSubmitting = false;
+      isSubmittingSimulator = false;
       submitBtn.disabled = false;
       submitBtn.classList.remove('loading');
     }
   });
 
-  async function checkBudgetAfterAdd() {
-    const budget = getBudget();
-    if (!budget) return;
-    try {
-      const res = await apiGetExpenses('', 'date_desc');
-      const expenses = res.data;
-      const now = new Date();
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(now.getDate() - 30);
-      thirtyDaysAgo.setHours(0, 0, 0, 0);
-      
-      const monthExpenses = expenses.filter(e => {
-        return new Date(e.date) >= thirtyDaysAgo;
-      });
-      const dc = getDisplayCurrency();
-      const sym = SYMBOLS[dc];
-      const monthTotal = computeTotalConverted(monthExpenses);
-      const budgetInDisplay = convertToDisplay(budget.amount, budget.currency, dc);
-      const remaining = budgetInDisplay - monthTotal.total;
-
-      if (remaining < 0) {
-        addNotification(
-          `You've exceeded your 30-day budget of ${fmtAmt(budgetInDisplay, sym)}. You're over by ${fmtAmt(Math.abs(remaining), sym)}.`,
-          'danger'
-        );
-      } else if (monthTotal.total >= budgetInDisplay * 0.8) {
-        addNotification(
-          `Heads up! You've used 80% of your 30-day budget. Only ${fmtAmt(remaining, sym)} left.`,
-          'warn'
-        );
-      }
-    } catch (err) { /* ignore */ }
-  }
-
-  currencySelect.addEventListener('change', () => {
-    currencySymbol.textContent = SYMBOLS[currencySelect.value] || currencySelect.value;
-    amountInput.step = currencySelect.value === 'JPY' ? '1' : '0.01';
-    amountInput.placeholder = currencySelect.value === 'JPY' ? '0' : '0.00';
-  });
-
-  // ===== Init =====
-  function init() {
-    $('greeting-time').textContent = getGreeting();
-    dateInput.value = new Date().toISOString().split('T')[0];
-    dateInput.max = new Date().toISOString().split('T')[0];
-
-    // Load display currency
-    const dc = getDisplayCurrency();
-    displayCurrencySelect.value = dc;
-
-    // Load notifications
+  // ===== Startup Initialization =====
+  document.addEventListener('DOMContentLoaded', () => {
     loadNotifications();
-    renderNotifications();
+    renderNotificationsList();
 
-    // Check auth
     const user = getUser();
     if (user) {
       showApp(user);
@@ -844,11 +850,6 @@
       loginOverlay.classList.remove('hidden');
       loginNameInput.focus();
     }
-  }
+  });
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
 })();
